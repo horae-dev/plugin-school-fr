@@ -4,9 +4,9 @@
 
 Horae plugin: read-only PRONOTE and ÉcoleDirecte homework, notes and deadlines as tasks.
 
-Version 0.2.0 · requires `horae-sdk` 0.6 · Apache-2.0
+Version 0.3.0 · requires `horae-sdk` 0.6 · Apache-2.0
 
-> 🚧 **Early.** This release ships the lockout guard and the normalizer (with the de-identification of child names). The PRONOTE and ÉcoleDirecte sources ([#2](../../issues/2), [#3](../../issues/3)) come next and sit on top of them.
+> 🚧 **Early.** This release ships the lockout guard, the normalizer (with the de-identification of child names) and the **PRONOTE source** ([#2](../../issues/2)). The ÉcoleDirecte source ([#3](../../issues/3)) comes next and sits on the same layers.
 
 ## The tool
 
@@ -19,6 +19,89 @@ Version 0.2.0 · requires `horae-sdk` 0.6 · Apache-2.0
 | `max_polls_per_day`, `min_interval`, `windows`, `max_logins_per_day` | the defaults below | the limits to judge `would_refuse` against |
 
 For each account it returns the polls and logins used today, the last poll, the earliest next poll, the backoff, the auth stop and `would_refuse` (the reason a poll would be refused right now, or `null`). A state file that cannot be trusted is reported as `state: invalid`.
+
+## PRONOTE
+
+`school-fr.pronote` (a source) reads a parent's PRONOTE account **read-only**, through the unofficial [pronotepy](https://github.com/bain3/pronotepy) library (MIT, pinned to an exact version). **That library is reverse-engineered and unofficial**: PRONOTE may change under it without notice, and repeated or failed logins can lock the account (risk [horae#73](https://github.com/horae-dev/horae/issues/73)). So the source goes through the [lockout guard](#limits) before every login, makes **one attempt per call, never retries**, and degrades instead.
+
+### What it reads
+
+For the chosen children (all by default), and nothing else:
+
+| PRONOTE | Becomes |
+|---|---|
+| Homework due from today to `days_ahead` | `homework` (a task while not done) |
+| Grades of the current period, or of the `periods` asked (the newest 200 per child) | `grades` (data only) |
+| **Unread** informations and surveys (30 days; the list only, never their content, so nothing is marked read) | `signatures` (a task each) |
+
+Informations are addressed to the parent, not to a child: they are listed once, under the first selected child. Teachers' names are not exposed by pronotepy. Children are published under an opaque id (a hash), with the platform's name in `children[].first_name`, which is declared for de-identification (see below). It never writes: no homework marked done, no information marked read, no message; a proxy refuses every client method that is not on a read allow-list, and a test checks it against pronotepy's own classes.
+
+### Parameters
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `account` | required | the account label (also the key of its credentials) |
+| `state_path` | required | the guard's state file, in a directory approved for writing (`paths.write`) |
+| `credentials_path` | `pronote-credentials.json` next to `state_path` | the credential store (see below); must be approved for writing too |
+| `max_polls_per_day`, `min_interval`, `windows` | 4, `2h`, none | the [limits](#limits) |
+| `max_logins_per_day` | `max_polls_per_day` (at most 6) | see below |
+| `children` | all | names (first name, surname or both, any case or accent) or ids to read |
+| `periods` | the current period | names of the periods whose grades are read |
+| `days_ahead` | 14 | homework due in the next 1 to 60 days |
+| `hosts` | none | extra exact host names, **only** when the core sent no network list (see Network) |
+
+**Polls and logins.** A plugin process lives for one run, so there is never a cached session: **every poll is one token login**, and a login happens at most once per poll. The login budget therefore caps the polls too. Keep `max_logins_per_day` at least `max_polls_per_day`, or the lower number wins. The day's budget is reserved before the login, so even a crash counts. Nothing is ever retried inside a call (pronotepy's own re-login after an error is switched off; it only repeats a harmless GET of the login page, up to three times, when it does not parse).
+
+### First setup: the QR code
+
+Do this once, on your own machine, with the plugin's Python environment.
+
+1. In PRONOTE (the website, parent account): *Mon compte → Application mobile → Générer un QR code*. Choose a **4-digit code** and keep the QR code on screen. It is valid for **10 minutes**; the source also needs the QR code's content, so save it as JSON (the QR code reader of your phone shows it, or scan it with any QR tool).
+2. Run, with the QR JSON in a file (or on stdin with `--qr -`):
+
+   ```sh
+   python3 -m horae_school_fr pronote-setup --account famille --qr qr.json
+   ```
+
+   It asks for the PIN (or reads `PRONOTE_PIN`), does the QR login **once**, and prints `{"famille": {url, username, password, uuid, client_identifier}}`: the `password` is PRONOTE's *token*, not your password. Delete `qr.json`. A wrong PIN or an expired code is **one** failed attempt; do not loop: generate a new QR code.
+   - A school with a custom domain: add `--host pronote.my-school.example` (the helper only accepts `*.index-education.net` otherwise).
+3. Give the output to the plugin, either as the value of the **secret `PRONOTE_CREDENTIALS`** (an optional secret the instance resolves from its environment), or with `--store /approved/dir/pronote-credentials.json` instead of printing (the file is written with mode 0600).
+
+### Where the rotating credentials live
+
+PRONOTE returns a **new token on every login** and the old one stops working. A secret is read-only for a plugin, so it cannot hold it. The source therefore persists the credentials in the **credential store**, a JSON file `credentials_path` (default: next to the guard state, so in a directory the instance already approved for writing, `call.paths.allowed(write=True)`). It is written:
+
+- **right after each login, before anything is read**, and again if the token changed while reading (a failed read must not lose the token);
+- atomically (a temporary sibling, flushed, then `os.replace`), mode 0600, under a `flock`;
+- and it is proven writable **before** the login (a store that cannot be written stops the poll with no budget spent).
+
+The first credentials come from the secret `PRONOTE_CREDENTIALS` (or from `pronote-setup --store`). Once the store has an entry for the account, **it wins**: the secret then holds a spent token. If you delete the store, the stale secret is tried, PRONOTE refuses it, and the account stops (below); run the setup again. A store that cannot be parsed is refused and left untouched, never overwritten. Treat the file like a password: it is not logged, not returned and not in any error.
+
+### Failures: degraded, never a retry loop
+
+| Case | Result |
+|---|---|
+| Wrong or expired token, QR code or PIN, a second factor, PRONOTE's "too many requests" lockout message | `AuthFailure(code)`: `degraded: auth_stopped (login_failed \| mfa_failed \| locked_out)`; the account is **stopped** until a human resets it ([Resetting an auth stop](#limits)) |
+| Network error, timeout (30 s per request), HTTP error, an API change, the store not writable after a login | `degraded: source_unavailable (network \| service \| api_changed \| credentials_unwritable)`; the guard backs off 1 h, 2 h ... 24 h |
+| Budget, window, backoff or stop | `degraded: budget_exhausted \| outside_window \| backoff_until <time> \| auth_stopped`, with no login |
+| `children` or `periods` that match nothing | `config_invalid`, after a good login that counts as a success |
+
+Messages are fixed codes: no credential, URL, name or response body is ever logged or returned (pronotepy's own logger, which logs them, is silenced). While logging in, any error PRONOTE itself codes counts as a refusal, not as an outage, because trying again is what locks accounts.
+
+### Network
+
+A school's server is `<school>.index-education.net` or a custom domain, and a manifest host is an exact DNS name (no wildcard), so **`plugin.yaml` declares no network host**. Approve your school's host in `horae.lock` (`permissions.network`, for example `0000000a.index-education.net`). Before the budget is touched, the source checks the credentials' URL with `call.host_allowed(url)`: `False` refuses (`network_not_approved`); `True` is allowed; `None` (an older core that sent no list) falls back to the plugin's own rule: a plain `https` host under `index-education.net`, or one named in `hosts`.
+
+**Limit:** pronotepy opens its own HTTP session, so this check happens *before the login* and cannot constrain the requests pronotepy then makes (nor a redirect it follows). The M5 isolation tier is what will enforce the allow-list at the network level.
+
+### Permissions
+
+| Kind | Entry | Why |
+|---|---|---|
+| intent | `task.create` | undone homework and things to sign (`normalize`) |
+| optional secret | `PRONOTE_CREDENTIALS` | the first credentials, from `pronote-setup` |
+| path (per instance, `paths.write`) | the directory of `state_path` and `credentials_path` | the guard state and the credential store |
+| network | none declared; approve the school's host in the lock | no wildcard in a manifest |
 
 ## Normalization and de-identification
 
@@ -79,7 +162,7 @@ jq 'del(.accounts["anna"])' state.json > state.json.new && mv state.json.new sta
 
 ## For source authors
 
-PRONOTE and ÉcoleDirecte sources must go through the guard (`horae_school_fr.guard`, re-exported by `horae_school_fr`):
+The PRONOTE source (and the ÉcoleDirecte one to come) goes through the guard (`horae_school_fr.guard`, re-exported by `horae_school_fr`):
 
 ```python
 limits = Limits.from_params(
@@ -98,7 +181,7 @@ Leaving the block normally records a success; `AuthFailure` stops the account; a
 
 | Milestone | Epic |
 |---|---|
-| M7 Mail, school, home | **French school platforms** — Read-only PRONOTE and ÉcoleDirecte sources. Done so far: lockout-safe scheduling ([#5](../../issues/5)), normalization and de-identification ([#4](../../issues/4)). |
+| M7 Mail, school, home | **French school platforms** — Read-only PRONOTE and ÉcoleDirecte sources. Done so far: lockout-safe scheduling ([#5](../../issues/5)), normalization and de-identification ([#4](../../issues/4)), the PRONOTE source ([#2](../../issues/2)). |
 
 Stories, estimates and acceptance criteria are in this repository's [issues](../../issues) and on the [roadmap project](https://github.com/orgs/horae-dev/projects/1).
 

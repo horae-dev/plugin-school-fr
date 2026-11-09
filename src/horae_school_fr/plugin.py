@@ -19,6 +19,7 @@ from typing import Any
 
 from horae_sdk import Call, Output, Permissions, Plugin, PluginError
 
+from horae_school_fr import credentials, pronote
 from horae_school_fr.guard import (
     Budget,
     Clock,
@@ -31,14 +32,20 @@ from horae_school_fr.guard import (
 
 NAME = "school-fr"
 """The plugin's name, also the namespace of its refs (`school-fr.status`)."""
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 HORAE = ">=0,<0.2"
 COMMAND = ["python3", "-m", "horae_school_fr"]
 """`runtime.command` of `plugin.yaml`. When installing, pin an absolute interpreter that has
 this package (the host's `PATH` is fixed and its working directory empty)."""
-PERMISSIONS = Permissions()
-"""Nothing declared: no network host, no secret, no intent. The state file's directory is granted
-per instance in `horae.lock` (`paths.write`) and checked with `call.paths.allowed`."""
+PERMISSIONS = Permissions(intents=("task.create",), optional_secrets=(credentials.SECRET,))
+"""`task.create` (homework and things to sign), and the optional secret `PRONOTE_CREDENTIALS`
+(the first credentials of the PRONOTE accounts, from `pronote-setup`).
+
+**No network host is declared**: a school's PRONOTE server is `<school>.index-education.net` or
+a custom domain, and a manifest host is an exact DNS name (no wildcard, schemas decision 63). The
+user approves their school's host in `horae.lock` (`permissions.network`) and the source checks
+it with `call.host_allowed`. The directory of the guard state and of the credential store is
+granted per instance in `horae.lock` (`paths.write`) and checked with `call.paths.allowed`."""
 MAX_ACCOUNTS = 16
 
 
@@ -60,13 +67,19 @@ def guard_for(
     return Guard(budget, limits, account)
 
 
-def build(*, clock: Clock = utc_now, environ: Mapping[str, str] | None = None) -> Plugin:
-    """The plugin. `clock` and `environ` (the `TZ` of the instance) are replaceable for tests."""
+def build(
+    *,
+    clock: Clock = utc_now,
+    environ: Mapping[str, str] | None = None,
+    connect: pronote.Connect = pronote.login,
+) -> Plugin:
+    """The plugin. `clock`, `environ` (the `TZ` of the instance, the secrets) and `connect` (the
+    PRONOTE login: `Credentials` to a client) are replaceable for tests."""
     plugin = Plugin(
         NAME,
         version=VERSION,
         permissions=PERMISSIONS,
-        description="Lockout-safe poll and login budget for the French school platforms.",
+        description="Read-only PRONOTE source behind a lockout-safe poll and login budget.",
     )
 
     @plugin.source(f"{NAME}.status")
@@ -97,6 +110,55 @@ def build(*, clock: Clock = utc_now, environ: Mapping[str, str] | None = None) -
         if len(labels) > MAX_ACCOUNTS or len(set(labels)) != len(labels):
             raise PluginError(f"config_invalid: accounts lists 1 to {MAX_ACCOUNTS} distinct labels")
         return Output({"accounts": [budget.peek(label, limits) for label in labels]})
+
+    @plugin.source(pronote.REF)
+    def pronote_source(
+        call: Call,
+        account: str,
+        state_path: str,
+        credentials_path: str | None = None,
+        max_polls_per_day: int = 4,
+        min_interval: str = "2h",
+        windows: list[str] | None = None,
+        max_logins_per_day: int | None = None,
+        children: list[str] | None = None,
+        periods: list[str] | None = None,
+        days_ahead: int = 14,
+        hosts: list[str] | None = None,
+    ) -> Output:
+        """Read-only PRONOTE: homework due in the next `days_ahead` days, the grades of the
+        current period (or `periods`) and the unread informations of `account`'s children
+        (all, or `children`). One token login per poll, through the lockout guard; the rotated
+        credentials are saved at once in the credential store next to `state_path`."""
+        limits = Limits.from_params(
+            max_polls_per_day=max_polls_per_day,
+            min_interval=min_interval,
+            windows=windows,
+            max_logins_per_day=(
+                min(max_polls_per_day, 6) if max_logins_per_day is None else max_logins_per_day
+            ),
+        )
+        env = os.environ if environ is None else environ
+        guard = guard_for(
+            call, state_path=state_path, account=account, limits=limits, clock=clock, environ=env
+        )
+        return pronote.run(
+            call,
+            account=account,
+            state_path=state_path,
+            credentials_path=credentials_path,
+            limits=limits,
+            options=pronote.Options(
+                pronote.strings("children", children),
+                pronote.strings("periods", periods, 8),
+                days_ahead,
+            ),
+            hosts=hosts,
+            guard=guard,
+            connect=connect,
+            clock=clock,
+            environ=env,
+        )
 
     return plugin
 
