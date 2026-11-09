@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.0
+
+Normalization and de-identification (story #4).
+
+- `horae_school_fr.normalize`: a library for the PRONOTE and ÉcoleDirecte sources. A small model
+  (`Child`, `Homework`, `Grade`, `Signature`) becomes the source data and `task.create` intents:
+  undone homework and signatures are tasks, notes and grades are data only. Fingerprints
+  `school-fr:<account>:<kind>:<hash of stable fields>`, due dates in the instance time zone, titles
+  escaped with the SDK and capped.
+- De-identification: the core's contract is a skill's `input_view` classes (schemas decision 47).
+  `input_view()` and `DEIDENTIFIED_FIELDS` declare child and teacher names as `class: person`, for
+  the skills built on this source. `tests/test_deid.py` runs the output through the core (engine,
+  de-identification policy, `ModelBackends`, a recording provider) and checks that no name reaches
+  a cloud backend in clear.
+- Defence in depth: `NameScrubber` spells known names in free text as declared, because the core's
+  matcher is not accent-folded (`Zoe` is not `Zoé`).
+- The core (`horae`) is a dev dependency, for the tests.
+- **Permissions:** unchanged (none). No tool is added.
+
 ## 0.1.0
 
 First release: the plugin scaffold and the lockout guard (story #5).

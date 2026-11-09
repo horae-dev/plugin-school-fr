@@ -31,7 +31,7 @@ from horae_school_fr.guard import (
 
 NAME = "school-fr"
 """The plugin's name, also the namespace of its refs (`school-fr.status`)."""
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 HORAE = ">=0,<0.2"
 COMMAND = ["python3", "-m", "horae_school_fr"]
 """`runtime.command` of `plugin.yaml`. When installing, pin an absolute interpreter that has

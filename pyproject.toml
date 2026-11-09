@@ -1,6 +1,6 @@
 [project]
 name = "horae-plugin-school-fr"
-version = "0.1.0"
+version = "0.2.0"
 description = "The school-fr Horae plugin: read-only PRONOTE and ÉcoleDirecte sources behind a lockout-safe login and poll budget."
 readme = "README.md"
 license = "Apache-2.0"
@@ -19,6 +19,7 @@ packages = ["src/horae_school_fr"]
 
 [dependency-groups]
 dev = [
+    "horae",
     "mypy>=2.4",
     "pre-commit>=4.7",
     "pytest>=9.1",
@@ -33,6 +34,9 @@ dev = [
 # Once horae-sdk is published, delete this table: the requirement above then resolves from PyPI.
 [tool.uv.sources]
 horae-sdk = { git = "https://github.com/horae-dev/horae", branch = "main", subdirectory = "sdk" }
+# The core itself, for the tests only: the de-identification test runs this source's output
+# through the core's engine and `ModelBackends` with a recording provider (schemas decision 47).
+horae = { git = "https://github.com/horae-dev/horae", branch = "main" }
 
 [tool.uv]
 required-version = ">=0.13"
