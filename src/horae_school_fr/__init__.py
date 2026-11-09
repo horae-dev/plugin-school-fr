@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The school-fr Horae plugin: the lockout guard, the normalizer and the PRONOTE source."""
+"""The school-fr Horae plugin: the lockout guard, the normalizer and the school sources."""
 
 from horae_school_fr.credentials import Credentials, CredentialStore
 from horae_school_fr.guard import (

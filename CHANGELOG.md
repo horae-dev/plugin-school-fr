@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.4.0
+
+The ÉcoleDirecte source (story #3).
+
+- `school-fr.ecoledirecte`: read-only homework (*cahier de texte*), grades and unread messages
+  (to sign or acknowledge) of a parent's children, through the lockout guard
+  (`guard.begin(login=True)`), one attempt per call, no retry. Unofficial, reverse-engineered API
+  (risk horae#73), written against the community documentation and synthetic data: **to be
+  checked once by the maintainer with a real account** (README, "First check").
+- **Our own minimal client, no ÉcoleDirecte library.** The maintained one (`ecoledirecte` 0.4.x,
+  LGPL-3.0-or-later) needs Python 3.14, is async, re-authenticates by itself after an error and
+  has no trusted-device persistence. The client uses `requests`: fixed host
+  `api.ecoledirecte.com`, an explicit timeout on every request, no redirect followed, a response
+  size cap, and an allow-list of four read routes, always with `verbe=get`.
+- Security question (QCM) and trusted device: `python -m horae_school_fr ecoledirecte-setup
+  --account LABEL --store PATH` shows the question and choices, takes one answer and stores the
+  `cn`/`cv` pair (mode 0600, atomic, `flock`); every scheduled login presents it and saves the one
+  returned, before reading. A quiz in a scheduled run is never answered: `AuthFailure("quiz_required")`
+  stops the account.
+- Failures: wrong credentials, a lockout, `quiz_required`, `quiz_failed` stop the account; network
+  errors, timeouts, HTTP errors and API changes back off. Messages are fixed codes.
+- Fix (in 0.3.0's PRONOTE source, security review): `socket.setdefaulttimeout` was not a reliable
+  bound for HTTP calls and did not cover the reads after the login. pronotepy's `requests.Session`
+  now carries an explicit default timeout (30 s) on **every** request, login and reads, through a
+  session subclass (`_http.TimeoutSession`). Tests: a local server that accepts and never answers
+  is cut off in both phases, for PRONOTE and ÉcoleDirecte.
+- Refactor: the credential file is the generic `RecordStore` (`CredentialStore` and the new
+  `DeviceStore` are its uses); the failure type, `Options` and the mapping helpers moved to a
+  shared module. PRONOTE's behaviour and tests are unchanged.
+- **Permissions (new, to approve):** network host `api.ecoledirecte.com`; optional secret
+  `ECOLEDIRECTE_CREDENTIALS` (user name and password). Intent unchanged (`task.create`).
+- `requests` is now a declared dependency (it was already installed through pronotepy).
+
 ## 0.3.0
 
 The PRONOTE source (story #2).
