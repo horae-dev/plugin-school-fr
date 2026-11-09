@@ -30,6 +30,7 @@ def test_plugin_yaml_passes_the_sdk_checks() -> None:
         network=document["permissions"].get("network", []),
         network_local=document["permissions"].get("network_local", []),
         secrets=document["permissions"].get("secrets", []),
+        optional_secrets=document["permissions"].get("optional_secrets", []),
         read=paths.get("read", []),
         write=paths.get("write", []),
     )

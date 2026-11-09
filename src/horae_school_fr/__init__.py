@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The school-fr Horae plugin: the lockout guard and the normalizer for PRONOTE and ÉcoleDirecte."""
+"""The school-fr Horae plugin: the lockout guard, the normalizer and the PRONOTE source."""
 
+from horae_school_fr.credentials import Credentials, CredentialStore
 from horae_school_fr.guard import (
     REASONS,
     Attempt,
@@ -32,6 +33,8 @@ __all__ = [
     "AuthFailure",
     "Budget",
     "Child",
+    "CredentialStore",
+    "Credentials",
     "Grade",
     "Guard",
     "Homework",

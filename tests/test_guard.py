@@ -526,7 +526,7 @@ def test_deleting_the_state_entry_resets_the_account(
 
 
 def test_the_stop_code_is_a_fixed_code_never_free_text(budget: Budget, state: Path) -> None:
-    secret = "Mot de passe incorrect pour parent@example.org / hunter2"  # noqa: S105 (synthetic)
+    secret = "Mot de passe incorrect pour parent@example.org / hunter2"
     with pytest.raises(AuthFailure) as caught, budget.begin("anna", NO_WINDOW, login=True):
         raise AuthFailure(secret)
     assert caught.value.code == "auth_failed"
