@@ -14,6 +14,11 @@ name, the token and the application UUID of each account, and nothing else. A fi
 be read or recognised is **refused**, never repaired or replaced: the token it held is the only
 copy.
 
+The same file format and the same care serve the ÉcoleDirecte *trusted device* (`Device`: the
+`cn`/`cv` pair that spares a security question at every login): `RecordStore` is the generic
+store, `CredentialStore` and `DeviceStore` its two uses. ÉcoleDirecte's user name and password are
+never stored here: they stay in the secret `ECOLEDIRECTE_CREDENTIALS`.
+
 The first credentials come from the store (after `pronote-setup --store`) or, when the store has
 none for the account, from the optional secret `PRONOTE_CREDENTIALS` (the `pronote-setup`
 output). Once the store has an entry, it wins: the secret holds a token that was spent by the
@@ -27,7 +32,7 @@ import os
 import re
 import tempfile
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -103,12 +108,23 @@ def from_secret(raw: str | None, account: str) -> Credentials | None:
     return None if entry is None else parse(entry)
 
 
-class CredentialStore:
-    """The credential file at `path` (already checked against the approved paths)."""
+class RecordStore[T]:
+    """A file of records keyed by account label, at `path` (already checked against the approved
+    paths). `parse` turns a stored entry into a record (raising `PluginError` for a bad one) and
+    `dump` turns a record into the entry written."""
 
-    def __init__(self, path: str, *, lock_timeout: float = LOCK_TIMEOUT_S) -> None:
+    def __init__(
+        self,
+        path: str,
+        parse: Callable[[object], T],
+        dump: Callable[[T], dict[str, str]],
+        *,
+        lock_timeout: float = LOCK_TIMEOUT_S,
+    ) -> None:
         self.path = path
         self.lock_timeout = lock_timeout
+        self._parse = parse
+        self._dump = dump
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
@@ -134,7 +150,7 @@ class CredentialStore:
         finally:
             os.close(descriptor)
 
-    def _read(self) -> dict[str, Credentials]:
+    def _read(self) -> dict[str, T]:
         try:
             with open(self.path, "rb") as handle:
                 raw = handle.read(MAX_BYTES + 1)
@@ -154,11 +170,11 @@ class CredentialStore:
                 or len(document["accounts"]) > MAX_ACCOUNTS
             ):
                 raise ValueError("shape")
-            result: dict[str, Credentials] = {}
+            result: dict[str, T] = {}
             for label, entry in document["accounts"].items():
                 if not LABEL.fullmatch(label):
                     raise ValueError("label")
-                result[label] = parse(entry)
+                result[label] = self._parse(entry)
             return result
         except (ValueError, KeyError, TypeError, RecursionError, PluginError):
             raise PluginError(
@@ -166,10 +182,10 @@ class CredentialStore:
                 "(left untouched; repair it, do not delete it blindly)"
             ) from None
 
-    def _write(self, accounts: Mapping[str, Credentials]) -> None:
+    def _write(self, accounts: Mapping[str, T]) -> None:
         document: dict[str, Any] = {
             "version": VERSION,
-            "accounts": {label: c.to_dict() for label, c in sorted(accounts.items())},
+            "accounts": {label: self._dump(c) for label, c in sorted(accounts.items())},
         }
         temporary = ""
         try:
@@ -189,16 +205,16 @@ class CredentialStore:
                     os.unlink(temporary)
             raise PluginError("credentials_unwritable: cannot write the store") from None
 
-    def load(self, account: str) -> Credentials | None:
+    def load(self, account: str) -> T | None:
         """The stored credentials of `account`, `None` when it has none (or no file)."""
         with self._locked():
             return self._read().get(account)
 
-    def save(self, account: str, credentials: Credentials) -> None:
+    def save(self, account: str, record: T) -> None:
         """Replace the account's entry, keeping the others. Atomic, mode 0600."""
         with self._locked():
             accounts = self._read()
-            accounts[account] = credentials
+            accounts[account] = record
             self._write(accounts)
 
     def check_writable(self) -> None:
@@ -208,11 +224,104 @@ class CredentialStore:
             self._write(self._read())
 
 
+class CredentialStore(RecordStore[Credentials]):
+    """The PRONOTE credential file at `path`."""
+
+    def __init__(self, path: str, *, lock_timeout: float = LOCK_TIMEOUT_S) -> None:
+        super().__init__(path, parse, lambda c: c.to_dict(), lock_timeout=lock_timeout)
+
+
+# --- ÉcoleDirecte ------------------------------------------------------------------------------
+
+DEVICE_NAME: Final = "ecoledirecte-device.json"
+ED_SECRET: Final = "ECOLEDIRECTE_CREDENTIALS"  # noqa: S105  (the name of an environment variable)
+"""The ÉcoleDirecte secret: a JSON object `{account label: {"username": ..., "password": ...}}`."""
+
+
+@dataclass(frozen=True)
+class Login:
+    """An ÉcoleDirecte user name and password (from the secret). Never printed."""
+
+    username: str = field(repr=False)
+    password: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class Device:
+    """ÉcoleDirecte's trusted-device pair: after a security question is answered once, the server
+    issues `cn` and `cv`, and a login that presents them is not asked the question again.
+    Never printed."""
+
+    cn: str = field(repr=False)
+    cv: str = field(repr=False)
+
+    def to_dict(self) -> dict[str, str]:
+        return {"cn": self.cn, "cv": self.cv}
+
+
+def _texts(entry: object, names: tuple[str, ...], what: str) -> list[str]:
+    if not isinstance(entry, Mapping) or set(entry) != set(names):
+        raise PluginError(f"credentials_invalid: {what} needs {' and '.join(names)}")
+    values: list[str] = []
+    for name in names:
+        value = entry[name]
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value) > MAX_FIELD
+            or _CONTROL.search(value)
+        ):
+            raise PluginError(f"credentials_invalid: {name} is not a usable text")
+        values.append(value)
+    return values
+
+
+def parse_login(entry: object) -> Login:
+    """`PluginError("credentials_invalid: ...")` for a bad entry (no value is echoed)."""
+    username, password = _texts(entry, ("username", "password"), "an account")
+    return Login(username, password)
+
+
+def parse_device(entry: object) -> Device:
+    cn, cv = _texts(entry, ("cn", "cv"), "a device")
+    return Device(cn, cv)
+
+
+def login_from_secret(raw: str | None, account: str) -> Login | None:
+    """The account's entry of the `ECOLEDIRECTE_CREDENTIALS` secret, `None` when absent."""
+    if not raw:
+        return None
+    try:
+        document = json.loads(raw)
+    except (ValueError, RecursionError):
+        raise PluginError(f"credentials_invalid: {ED_SECRET} is not JSON") from None
+    if not isinstance(document, dict) or len(document) > MAX_ACCOUNTS:
+        raise PluginError(f"credentials_invalid: {ED_SECRET} is an object keyed by account")
+    entry = document.get(account)
+    return None if entry is None else parse_login(entry)
+
+
+class DeviceStore(RecordStore[Device]):
+    """The trusted-device file of the ÉcoleDirecte accounts at `path`."""
+
+    def __init__(self, path: str, *, lock_timeout: float = LOCK_TIMEOUT_S) -> None:
+        super().__init__(path, parse_device, lambda d: d.to_dict(), lock_timeout=lock_timeout)
+
+
 __all__ = [
     "DEFAULT_NAME",
+    "DEVICE_NAME",
+    "ED_SECRET",
     "SECRET",
     "CredentialStore",
     "Credentials",
+    "Device",
+    "DeviceStore",
+    "Login",
+    "RecordStore",
     "from_secret",
+    "login_from_secret",
     "parse",
+    "parse_device",
+    "parse_login",
 ]

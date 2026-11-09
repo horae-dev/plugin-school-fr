@@ -35,18 +35,14 @@ three times when the login page does not parse.
 
 import argparse
 import getpass
-import hashlib
 import importlib
 import json
 import logging
-import math
 import os
 import re
 import sys
-import unicodedata
 import uuid as uuidlib
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from typing import Any, Final, TextIO
 
@@ -55,6 +51,18 @@ import requests
 from horae_sdk import Call, Output, PluginError
 from horae_sdk.protocol import url_host
 
+from horae_school_fr._common import (
+    Options,
+    SourceUnavailable,
+    chain,
+    child_id,
+    fold,
+    grade_value,
+    number,
+    resolve_path,
+    strings,
+    wanted_child,
+)
 from horae_school_fr._http import TimeoutSession
 from horae_school_fr.credentials import (
     DEFAULT_NAME,
@@ -89,12 +97,9 @@ INDEX_EDUCATION: Final = ".index-education.net"
 HTTP_TIMEOUT_S: Final = 30.0
 """pronotepy sets no timeout. Every request of its `requests.Session` (the login and the reads
 that follow) gets this one: see `_RequestsWithTimeout`."""
-MAX_DAYS_AHEAD: Final = 60
 INFO_DAYS: Final = 30
 """Unread informations are looked for since this many days."""
 MAX_GRADES: Final = 200
-MAX_LIST: Final = 16
-MAX_TEXT_PARAM: Final = 64
 LOCKED_OUT_CODE: Final = 25
 """PRONOTE's "exceeded max authorization requests"."""
 
@@ -263,45 +268,23 @@ Connect = Callable[[Credentials], Any]
 
 # --- failures ----------------------------------------------------------------------------------
 
-UNAVAILABLE = ("network", "service", "api_changed", "credentials_unwritable")
-
-
-class SourceUnavailable(PluginError):
-    """A transient failure: the guard backs off. The message is a fixed code."""
-
-    def __init__(self, code: str) -> None:
-        self.code = code if code in UNAVAILABLE else "api_changed"
-        super().__init__(f"degraded: source_unavailable ({self.code})")
-
-
-def _chain(error: BaseException) -> Iterator[BaseException]:
-    seen: set[int] = set()
-    pending: list[BaseException | None] = [error]
-    while pending:
-        current = pending.pop()
-        if current is None or id(current) in seen or len(seen) > 8:
-            continue
-        seen.add(id(current))
-        yield current
-        pending += [current.__cause__, current.__context__]
-
 
 def classify(error: BaseException, *, logging_in: bool) -> PluginError:
     """`AuthFailure` for wrong credentials, an expired token, a second factor or a lockout;
     `SourceUnavailable` for everything else. While logging in, any error PRONOTE itself coded
     means the server answered and said no, which is not a reason to try again."""
-    chain = list(_chain(error))
-    api = [e for e in chain if isinstance(e, pronotepy.PronoteAPIError)]
+    errors = list(chain(error))
+    api = [e for e in errors if isinstance(e, pronotepy.PronoteAPIError)]
     codes = {e.pronote_error_code for e in api if e.pronote_error_code is not None}
     if LOCKED_OUT_CODE in codes:
         return AuthFailure("locked_out")
-    if any(isinstance(e, pronotepy.MFAError) for e in chain):
+    if any(isinstance(e, pronotepy.MFAError) for e in errors):
         return AuthFailure("mfa_failed")
-    if any(isinstance(e, _LoginRejected | pronotepy.CryptoError) for e in chain):
+    if any(isinstance(e, _LoginRejected | pronotepy.CryptoError) for e in errors):
         return AuthFailure("login_failed")
     if logging_in and codes:
         return AuthFailure("login_failed")
-    if any(isinstance(e, OSError) for e in chain):
+    if any(isinstance(e, OSError) for e in errors):
         return SourceUnavailable("network")
     if api:
         return SourceUnavailable("service")
@@ -311,33 +294,11 @@ def classify(error: BaseException, *, logging_in: bool) -> PluginError:
 # --- parameters --------------------------------------------------------------------------------
 
 
-def strings(name: str, value: object, limit: int = MAX_LIST) -> tuple[str, ...] | None:
-    if value is None:
-        return None
-    if (
-        isinstance(value, str)
-        or not isinstance(value, Sequence)
-        or not 1 <= len(value) <= limit
-        or not all(isinstance(v, str) and 1 <= len(v) <= MAX_TEXT_PARAM for v in value)
-    ):
-        raise PluginError(f"config_invalid: {name} is a list of 1 to {limit} short texts")
-    return tuple(value)
-
-
-@dataclass(frozen=True)
-class Options:
-    """Which children and periods to read."""
-
-    children: tuple[str, ...] | None = None
-    """Names (first name, surname or both, any case or accent) or ids; `None`: all children."""
-    periods: tuple[str, ...] | None = None
-    """Names of the periods whose grades are read; `None`: the current period."""
-    days_ahead: int = 14
-    """Homework due from today to this many days ahead."""
-
-    def __post_init__(self) -> None:
-        if type(self.days_ahead) is not int or not 1 <= self.days_ahead <= MAX_DAYS_AHEAD:
-            raise PluginError(f"config_invalid: days_ahead is 1 to {MAX_DAYS_AHEAD}")
+def _hosts(value: object) -> tuple[str, ...]:
+    hosts = strings("hosts", value, 8) or ()
+    if not all(_HOST.fullmatch(h) for h in hosts):
+        raise PluginError("config_invalid: hosts are lowercase DNS names")
+    return hosts
 
 
 def check_host(call: Call, url: str, extra_hosts: Sequence[str] = ()) -> None:
@@ -360,57 +321,7 @@ def check_host(call: Call, url: str, extra_hosts: Sequence[str] = ()) -> None:
         )
 
 
-def _hosts(value: object) -> tuple[str, ...]:
-    hosts = strings("hosts", value, 8) or ()
-    if not all(_HOST.fullmatch(h) for h in hosts):
-        raise PluginError("config_invalid: hosts are lowercase DNS names")
-    return hosts
-
-
-def _resolve(call: Call, path: object, state_path: str) -> str:
-    wanted = path if path is not None else os.path.join(os.path.dirname(state_path), DEFAULT_NAME)
-    if not isinstance(wanted, str) or not wanted:
-        raise PluginError("config_invalid: credentials_path is an absolute path")
-    real = call.paths.allowed(wanted, write=True)
-    if real is None or os.path.isdir(real) or real == state_path:
-        raise PluginError("path_not_approved: credentials_path is not under a path approved")
-    return real
-
-
 # --- reading -----------------------------------------------------------------------------------
-
-
-def _fold(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text.casefold())
-    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-
-
-def _child_id(raw: str) -> str:
-    """An opaque, stable id: the platform's own id is never published."""
-    return "c" + hashlib.sha256(raw.encode("utf-8", "surrogatepass")).hexdigest()[:12]
-
-
-def _wanted(name: str, child_id: str, wanted: tuple[str, ...] | None) -> bool:
-    if wanted is None:
-        return True
-    parts = {_fold(p) for p in re.split(r"[\s-]+", name) if p}
-    full = _fold(" ".join(name.split()))
-    return any(_fold(w) in parts or _fold(w) == full or w == child_id for w in wanted)
-
-
-def _number(text: object) -> float | None:
-    try:
-        value = float(str(text).replace(",", ".").strip())
-    except ValueError:
-        return None
-    return value if math.isfinite(value) else None
-
-
-def _grade_value(text: object) -> float | str | None:
-    if text is None or str(text).strip() == "":
-        return None
-    number = _number(text)
-    return str(text) if number is None else number
 
 
 def read(
@@ -423,9 +334,9 @@ def read(
     chosen: list[tuple[Any, Child]] = []
     for info in client.children:
         raw_id, name = str(info.id), str(info.name)
-        child_id = _child_id(raw_id)
-        if _wanted(name, child_id, options.children):
-            chosen.append((info, Child(child_id, name)))
+        opaque = child_id(raw_id)
+        if wanted_child(name, opaque, options.children):
+            chosen.append((info, Child(opaque, name)))
     if not chosen or len(chosen) > MAX_CHILDREN:
         raise LookupError("children")
 
@@ -433,8 +344,8 @@ def read(
     if options.periods is None:
         selected = [client.current_period]
     else:
-        wanted = {_fold(p) for p in options.periods}
-        selected = [p for p in periods if _fold(str(p.name)) in wanted]
+        wanted = {fold(p) for p in options.periods}
+        selected = [p for p in periods if fold(str(p.name)) in wanted]
         if len(selected) < len(wanted):
             raise LookupError("periods")
 
@@ -462,8 +373,8 @@ def read(
                     Grade(
                         child.id,
                         str(mark.subject.name),
-                        _grade_value(mark.grade),
-                        _number(mark.out_of) or 20.0,
+                        grade_value(mark.grade),
+                        number(mark.out_of) or 20.0,
                         mark.date,
                         str(mark.comment or ""),
                     )
@@ -504,7 +415,7 @@ def run(
     """One poll of one account (see the module docstring). Raises `Refused` (a `PluginError`
     that the core marks degraded) when the budget says no; no network call happens then."""
     label = account if isinstance(account, str) else ""
-    path = _resolve(call, credentials_path, guard.budget.state_path)
+    path = resolve_path(call, credentials_path, guard.budget.state_path, DEFAULT_NAME)
     store = CredentialStore(path)
     credentials = store.load(label) or from_secret(environ.get(SECRET), label)
     if credentials is None:
