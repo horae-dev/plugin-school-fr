@@ -1,0 +1,31 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "enabledManagers": ["pep621", "github-actions", "pre-commit", "pyenv", "custom.regex"],
+  "pre-commit": { "enabled": true },
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "description": "Weekly uv.lock refresh. It also moves horae-sdk to the latest commit of the core's main: pyproject.toml takes it from the branch and uv.lock pins the commit. A git commit has no release timestamp, so the 7-day age cannot apply: review that bump like any dependency.",
+    "schedule": ["before 6am on monday"]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Tool versions pinned in workflow env vars (gitleaks, uv): a `# renovate:` comment line followed by NAME_VERSION: x.y.z (no leading v). A gitleaks bump also needs GITLEAKS_SHA256 updated by hand; until then the checksum step fails closed.",
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>[^\\s]+)\\n\\s*[A-Z_]+_VERSION: (?<currentValue>[\\w.-]+)"
+      ],
+      "extractVersionTemplate": "^v?(?<version>.+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "groupName": "ruff",
+      "minimumReleaseAge": "7 days",
+      "matchPackageNames": ["ruff"]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+# Written by `uv run python -m horae_school_fr --manifest > plugin.yaml`; tests/test_manifest.py
+# checks it is what the SDK writes. When installing, pin runtime.command to an absolute
+# interpreter that has this package (horae-sdk README, "The command").
+name: school-fr
+version: 0.1.0
+horae: '>=0,<0.2'
+description: Lockout-safe poll and login budget for the French school platforms.
+license: Apache-2.0
+homepage: https://github.com/horae-dev/plugin-school-fr
+provides:
+  sources:
+  - school-fr.status
+permissions: {}
+runtime:
+  protocol: mcp-stdio
+  command:
+  - python3
+  - -m
+  - horae_school_fr

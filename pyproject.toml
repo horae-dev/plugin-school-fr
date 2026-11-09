@@ -1,0 +1,72 @@
+[project]
+name = "horae-plugin-school-fr"
+version = "0.1.0"
+description = "The school-fr Horae plugin: read-only PRONOTE and ÉcoleDirecte sources behind a lockout-safe login and poll budget."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "horae-sdk>=0.6,<0.7",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/horae_school_fr"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4",
+    "pre-commit>=4.7",
+    "pytest>=9.1",
+    "pytest-cov>=7",
+    "ruff>=0.17",
+    "types-pyyaml>=6",
+]
+
+# horae-sdk is not on PyPI yet: it comes from the core repository's main branch. uv.lock pins
+# the exact commit (CI checks the lock, so builds are reproducible); Renovate's weekly lock
+# file maintenance moves it to the latest main, or run `uv lock --upgrade-package horae-sdk`.
+# Once horae-sdk is published, delete this table: the requirement above then resolves from PyPI.
+[tool.uv.sources]
+horae-sdk = { git = "https://github.com/horae-dev/horae", branch = "main", subdirectory = "sdk" }
+
+[tool.uv]
+required-version = ">=0.13"
+exclude-newer = "7 days"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S", "PT"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
+python_version = "3.12"
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-config --strict-markers"
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["horae_school_fr"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "if __name__ == .__main__.:"]
