@@ -646,7 +646,7 @@ wheels = [
 [[package]]
 name = "horae"
 version = "0.0.0"
-source = { git = "https://github.com/horae-dev/horae?branch=main#82b5c32d8f469c1b87f009df982c695e4b472228" }
+source = { git = "https://github.com/horae-dev/horae?branch=main#13f6faa20301a87b7bcce6adb010e7c800723169" }
 dependencies = [
     { name = "anthropic" },
     { name = "cronsim" },
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "horae-plugin-school-fr"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "horae-sdk" },
@@ -704,8 +704,8 @@ dev = [
 
 [[package]]
 name = "horae-sdk"
-version = "0.6.0"
-source = { git = "https://github.com/horae-dev/horae?subdirectory=sdk&branch=main#82b5c32d8f469c1b87f009df982c695e4b472228" }
+version = "0.7.0"
+source = { git = "https://github.com/horae-dev/horae?subdirectory=sdk&branch=main#13f6faa20301a87b7bcce6adb010e7c800723169" }
 dependencies = [
     { name = "anyio" },
     { name = "mcp" },

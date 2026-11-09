@@ -4,7 +4,7 @@
 
 Horae plugin: read-only PRONOTE and ÉcoleDirecte homework, notes and deadlines as tasks.
 
-Version 0.4.0 · requires `horae-sdk` 0.6 · Apache-2.0
+Version 0.4.1 · requires `horae-sdk` 0.7 · Apache-2.0
 
 > 🚧 **Early.** This release ships the lockout guard, the normalizer (with the de-identification of child names), the **PRONOTE source** ([#2](../../issues/2)) and the **ÉcoleDirecte source** ([#3](../../issues/3)). Both sources are unofficial and have only been tested against recorded or synthetic data.
 
@@ -182,13 +182,13 @@ With your real account, in a directory approved for writing: run the setup, answ
 
 A task's fingerprint is `school-fr:<account>:<homework|signature>:<hash>`, the hash covering the stable fields only (child id, subject or title, date, text): the done flag, the attachments count and the teacher never change it. Titles are escaped with the SDK (`escape_title`) and capped at 160 characters. Free text in the data is capped; the data holds child ids per item, and names only in `children[].first_name` and the optional `teacher`.
 
-**De-identification.** In Horae, a *skill* declares de-identified fields in its `input_view` (`skill.yaml`, `{class: person}`); a plugin's manifest or a source's output carries no such annotation (schemas decision 47). So this plugin publishes the declaration as data for the skills built on it: `horae_school_fr.input_view()` (the whole view, to copy from) and `DEIDENTIFIED_FIELDS` (`children[].first_name`, `homework[].teacher`, `grades[].teacher`). With a cloud model alias the core then replaces those values, and every other string that contains one (a homework description that mentions the child), with `[PERSON_n]` before the request leaves, and restores them in the answer. `tests/test_deid.py` runs this output through the core's engine and `ModelBackends` and checks the exact bytes sent.
+**De-identification.** Since horae-sdk 0.7 (schemas decision 68) the plugin declares its own personal fields: `school-fr.pronote` and `school-fr.ecoledirecte` are registered with `personal_fields=list(DEIDENTIFIED_FIELDS)` (`children[].first_name`, `homework[].teacher`, `grades[].teacher`, relative to each source's output), and `plugin.yaml` carries them in `provides.personal_fields`, keyed by source ref. The core enforces them with a cloud model alias, **whatever the skill declares**: those values, and every other string that contains one (a homework description that mentions the child), become `[PERSON_n]` before the request leaves, and are restored in the answer. A skill with no `input_view` classes therefore sends no child or teacher name; the declaration is also recorded in `horae.lock` when the plugin is approved. `horae_school_fr.input_view()` stays as guidance for a skill that wants to classify more (free text, for example), and `NameScrubber` as extra protection. `tests/test_deid.py` runs this output through the core's engine and `ModelBackends` and checks the exact bytes sent.
 
 Limits, in the core and here:
 
-- The core compares letters case-folded but **not accent-folded**: `Zoe` is not `Zoé` to it. `normalize` therefore spells every whole-word occurrence of a declared name in free text as declared (`zoe`, `ZOÉ`, a decomposed `é` become `Zoé`) so the core then catches it; `tests/test_deid.py` documents the gap.
+- The core folds accents and case on both sides (decision 68): `Zoe` and `ZOE` are caught when `Zoé` is declared. `normalize` still spells every whole-word occurrence of a declared name in free text as declared, as defence in depth.
 - Nicknames, initials, typos and names of fewer than 3 letters are not matched, by the core or here.
-- A skill that does not declare the classes gets no protection: copy every `person` line of `input_view()`. Local model aliases are sent the data unchanged, by design.
+- Only the declared paths and the names found there are protected: a name that appears only in free text, for a child or teacher that is not in a declared field of the same run, is not known. Local model aliases are sent the data unchanged, by design.
 
 ## Limits
 

@@ -3,8 +3,10 @@
 
 The test runs this source's output through the core: the engine, the instance's de-identification
 policy and `ModelBackends`, with a provider that records the exact bytes it is asked to send. The
-declaration is the one a skill makes in its `input_view` (schemas decision 47); here it is
-`horae_school_fr.input_view()`, written to a skill folder and loaded by the core's own loader."""
+protection comes from the `personal_fields` the plugin declares in its manifest (schemas decision
+68, here the ones of `plugin.yaml`), which the core enforces whatever the skill declares; the
+skill's own `input_view` (here `horae_school_fr.input_view()`, written to a skill folder and
+loaded by the core's own loader, schemas decision 47) is guidance and adds the free-text classes."""
 
 import asyncio
 import json
@@ -14,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 from horae.contracts import Pipeline, RunRecord, Usage
 from horae.contracts.instance import ModelAlias
@@ -34,7 +37,7 @@ from fixtures_school import (
     PARIS,
     SIGNATURES,
 )
-from horae_school_fr import DEIDENTIFIED_FIELDS, input_view, normalize
+from horae_school_fr import DEIDENTIFIED_FIELDS, input_view, manifest, normalize
 
 SKILL = "school-fr/brief"
 START = datetime(2026, 11, 9, 5, 30, tzinfo=UTC)
@@ -100,8 +103,16 @@ class Provider:
         return None
 
 
+REF = "school-fr.pronote"
+
+
 def run(
-    tmp_path: Path, spec: Mapping[str, Any], answer: Any, view: Any = None
+    tmp_path: Path,
+    spec: Mapping[str, Any],
+    answer: Any,
+    view: Any = None,
+    ref: str = REF,
+    declare: bool = True,
 ) -> tuple[Provider, RunRecord]:
     """A pipeline `collect` (this source's output) then `llm` with the skill, through the engine
     and `ModelBackends`, the instance's policy being built as `horae run` builds it."""
@@ -110,15 +121,18 @@ def run(
     )
     payload = source.data
     plugins = FixturePlugins()
+    provides: dict[str, Any] = {"sources": [ref], "skills": [SKILL]}
+    if declare:  # what `plugin.yaml` says, as the manifest the host loads
+        provides["personal_fields"] = {ref: manifest()["provides"]["personal_fields"][ref]}
     plugins.add(
         {
             "name": "school-fr",
-            "version": "0.2.0",
+            "version": "0.4.1",
             "horae": ">=0",
-            "provides": {"sources": ["school-fr.items"], "skills": [SKILL]},
+            "provides": provides,
             "permissions": {},
         },
-        {"school-fr.items": lambda params, input: payload},
+        {ref: lambda params, input: payload},
         commit="a" * 40,
     )
     provider = Provider(spec["backend"], answer)
@@ -133,7 +147,7 @@ def run(
         {
             "name": "school",
             "steps": [
-                {"collect": ["school-fr.items"]},
+                {"collect": [ref]},
                 {
                     "llm": {
                         "skill": SKILL,
@@ -249,26 +263,53 @@ def test_a_local_model_is_sent_the_names_unchanged(tmp_path: Path) -> None:
     assert DEID_NOTE not in body
 
 
-def test_without_the_declaration_the_names_would_leak(tmp_path: Path) -> None:
-    """The control for the control: a skill that declares no class is sent every name, so the
-    protection is the declaration (`input_view()`) and not something else in the pipeline."""
+@pytest.mark.parametrize("ref", ["school-fr.pronote", "school-fr.ecoledirecte"])
+def test_a_skill_without_classes_sends_no_name_to_a_cloud_alias(tmp_path: Path, ref: str) -> None:
+    """The plugin's own declaration (`personal_fields`, decision 68) protects the names: the
+    skill's view is a plain list of paths, with no `class` at all."""
     paths = list(input_view())
-    provider, record = run(tmp_path, CLOUD, {"summary": "ok"}, view=paths)
+    assert all(isinstance(path, str) for path in paths)
+    provider, record = run(tmp_path, CLOUD, {"summary": "ok"}, view=paths, ref=ref)
+    assert record.status == "ok", record.steps[-1].error
+    [body] = provider.sent
+    assert_no_name(body.decode())
+    payload = json.loads(body)
+    assert payload["system"].endswith(DEID_NOTE)
+    assert payload["input"][0]["data"]["children"][0]["first_name"].startswith("[PERSON_")
+    assert payload["input"][0]["data"]["homework"][0]["teacher"].startswith("[PERSON_")
+
+
+def test_without_the_declaration_the_names_would_leak(tmp_path: Path) -> None:
+    """The control for the control: with neither the manifest declaration nor a class in the
+    skill, every name is sent, so the protection is the declaration and nothing else."""
+    provider, record = run(
+        tmp_path, CLOUD, {"summary": "ok"}, view=list(input_view()), declare=False
+    )
     assert record.status == "ok", record.steps[-1].error
     body = provider.sent[0].decode()
     assert "Zoé" in body
     assert DEID_NOTE not in body
 
 
-def test_core_gap_the_matcher_does_not_fold_accents() -> None:
-    """Documents the core's limit (decision 47 C: case-folded, not accent-folded). If this test
-    starts failing the core folds accents: the plugin's `NameScrubber` is then redundant for
-    that case (keep it for defence in depth)."""
+def test_both_sources_declare_the_fields_the_normalizer_outputs() -> None:
+    declared = manifest()["provides"]["personal_fields"]
+    assert declared == {
+        "school-fr.pronote": list(DEIDENTIFIED_FIELDS),
+        "school-fr.ecoledirecte": list(DEIDENTIFIED_FIELDS),
+    }
+    data = normalize(
+        ACCOUNT, CHILDREN, homework=HOMEWORK, grades=GRADES, signatures=SIGNATURES, tz=PARIS
+    ).data
+    present = {path for path, _ in _leaves(data)}
+    assert set(DEIDENTIFIED_FIELDS) <= present
+
+
+def test_the_core_folds_accents_so_zoe_is_caught_when_zoe_with_accent_is_declared() -> None:
+    """Was the documented core gap (decision 47 C); decision 68 A closes it. `NameScrubber`
+    stays as extra protection."""
     view = {"who[]": {"class": "person"}}
-    raw = {"who": ["Zoé"], "note": "Zoe, ZOÉ and Zoé"}
+    raw = {"who": ["Zoé"], "note": "Zoe, ZOE, ZOÉ and Zoé"}
     sent = pseudonymize(raw, view).data["note"]
-    assert sent == "Zoe, [PERSON_1] and [PERSON_1]"  # `Zoe` goes through in clear
-    scrubbed = normalize(
-        ACCOUNT, CHILDREN, homework=HOMEWORK, tz=PARIS
-    ).data  # the plugin spells it as declared first
+    assert sent == "[PERSON_1], [PERSON_1], [PERSON_1] and [PERSON_1]"
+    scrubbed = normalize(ACCOUNT, CHILDREN, homework=HOMEWORK, tz=PARIS).data
     assert "Zoe " not in scrubbed["homework"][0]["description"]
