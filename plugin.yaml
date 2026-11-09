@@ -2,18 +2,22 @@
 # checks it is what the SDK writes. When installing, pin runtime.command to an absolute
 # interpreter that has this package (horae-sdk README, "The command").
 name: school-fr
-version: 0.3.0
+version: 0.4.0
 horae: '>=0,<0.2'
-description: Read-only PRONOTE source behind a lockout-safe poll and login budget.
+description: Read-only PRONOTE and ÉcoleDirecte sources behind a lockout-safe budget.
 license: Apache-2.0
 homepage: https://github.com/horae-dev/plugin-school-fr
 provides:
   sources:
   - school-fr.status
   - school-fr.pronote
+  - school-fr.ecoledirecte
 permissions:
+  network:
+  - api.ecoledirecte.com
   optional_secrets:
   - PRONOTE_CREDENTIALS
+  - ECOLEDIRECTE_CREDENTIALS
   intents:
   - task.create
 runtime:

@@ -4,9 +4,9 @@
 
 Horae plugin: read-only PRONOTE and ÉcoleDirecte homework, notes and deadlines as tasks.
 
-Version 0.3.0 · requires `horae-sdk` 0.6 · Apache-2.0
+Version 0.4.0 · requires `horae-sdk` 0.6 · Apache-2.0
 
-> 🚧 **Early.** This release ships the lockout guard, the normalizer (with the de-identification of child names) and the **PRONOTE source** ([#2](../../issues/2)). The ÉcoleDirecte source ([#3](../../issues/3)) comes next and sits on the same layers.
+> 🚧 **Early.** This release ships the lockout guard, the normalizer (with the de-identification of child names), the **PRONOTE source** ([#2](../../issues/2)) and the **ÉcoleDirecte source** ([#3](../../issues/3)). Both sources are unofficial and have only been tested against recorded or synthetic data.
 
 ## The tool
 
@@ -82,7 +82,7 @@ The first credentials come from the secret `PRONOTE_CREDENTIALS` (or from `prono
 | Case | Result |
 |---|---|
 | Wrong or expired token, QR code or PIN, a second factor, PRONOTE's "too many requests" lockout message | `AuthFailure(code)`: `degraded: auth_stopped (login_failed \| mfa_failed \| locked_out)`; the account is **stopped** until a human resets it ([Resetting an auth stop](#limits)) |
-| Network error, timeout (30 s per request), HTTP error, an API change, the store not writable after a login | `degraded: source_unavailable (network \| service \| api_changed \| credentials_unwritable)`; the guard backs off 1 h, 2 h ... 24 h |
+| Network error, timeout (30 s per request, login and reads), HTTP error, an API change, the store not writable after a login | `degraded: source_unavailable (network \| service \| api_changed \| credentials_unwritable)`; the guard backs off 1 h, 2 h ... 24 h |
 | Budget, window, backoff or stop | `degraded: budget_exhausted \| outside_window \| backoff_until <time> \| auth_stopped`, with no login |
 | `children` or `periods` that match nothing | `config_invalid`, after a good login that counts as a success |
 
@@ -102,6 +102,72 @@ A school's server is `<school>.index-education.net` or a custom domain, and a ma
 | optional secret | `PRONOTE_CREDENTIALS` | the first credentials, from `pronote-setup` |
 | path (per instance, `paths.write`) | the directory of `state_path` and `credentials_path` | the guard state and the credential store |
 | network | none declared; approve the school's host in the lock | no wildcard in a manifest |
+
+## ÉcoleDirecte
+
+`school-fr.ecoledirecte` (a source) reads a parent's (or a student's) ÉcoleDirecte account **read-only**. **ÉcoleDirecte has no public API**: the plugin speaks the web app's reverse-engineered HTTP API (`https://api.ecoledirecte.com/v3`), which may change without notice, and repeated or failed logins and wrong security answers can lock the account (risk [horae#73](https://github.com/horae-dev/horae/issues/73)). So it goes through the [lockout guard](#limits) before every login, makes **one attempt per call, never retries**, and degrades instead. It has been written against the community documentation and synthetic data, **not** against a real account: try it on yours before trusting it (see "First check").
+
+**Why our own client.** The maintained Python library (`ecoledirecte` on PyPI, the Home Assistant integration's client) is LGPL-3.0-or-later, needs Python 3.14 (this plugin: 3.12), is asynchronous, re-authenticates on its own after an error (which the guard forbids) and has no trusted-device persistence (a security question is answered from a pre-supplied list). The plugin therefore has a small read-only client (`ecoledirecte.py`: `requests`, a timeout on every request, a fixed host, no redirect followed, a 4 MiB response cap, and an allow-list of four read routes).
+
+### What it reads
+
+For the chosen children (all by default), and nothing else:
+
+| ÉcoleDirecte | Becomes |
+|---|---|
+| Homework (*cahier de texte*) due from today to `days_ahead` (HTML turned to text; at most 20 days are fetched) | `homework` (a task while not done) |
+| Grades of the current period, or of the `periods` asked (the newest 200 per child) | `grades` (data only) |
+| **Unread** received messages (30 days; the list only: a message is never opened, because opening marks it read) | `signatures` (a task each) |
+
+Messages are addressed to the parent: they are listed once, under the first selected child. Children are published under an opaque id (a hash), with the platform's name in `children[].first_name`, and the homework's teacher in `homework[].teacher`, both declared for de-identification (see below). It never writes: the client has no method to mark homework done, to reply to or delete a message; the only routes it can request are on a read allow-list, always with the read verb, and a test checks every request of a poll.
+
+### Parameters
+
+The same as PRONOTE's (`account`, `state_path`, `credentials_path`, `max_polls_per_day`, `min_interval`, `windows`, `max_logins_per_day`, `children`, `periods`, `days_ahead`), without `hosts`. `credentials_path` defaults to `ecoledirecte-device.json` next to `state_path` and must be in an approved directory too. Every poll is one login (a plugin process has no cached session), so `max_logins_per_day` defaults to `max_polls_per_day` (at most 6).
+
+### First setup: the security question
+
+ÉcoleDirecte asks a **security question** (the QCM) when a login comes from a device it does not know. A scheduled source **never answers it**: a bot guessing at it is how accounts get locked. You answer it once, with the helper, and ÉcoleDirecte then gives the plugin a **trusted device** (a `cn`/`cv` pair) that later logins present, so the question is not asked again.
+
+1. Put your user name and password in the **secret `ECOLEDIRECTE_CREDENTIALS`** (an optional secret the instance resolves from its environment): `{"famille": {"username": "...", "password": "..."}}`, the key being the account label. (They are never written to a file by the plugin.)
+2. Run the helper once, on your own machine, with the plugin's Python environment, and a store in a directory approved for writing (the same one as the guard state):
+
+   ```sh
+   python3 -m horae_school_fr ecoledirecte-setup --account famille --store /approved/dir/ecoledirecte-device.json
+   ```
+
+   It takes the user name and password from the secret if it is set in the environment, else prompts for them (the password is not echoed; prefer that to typing the password in a command line). It logs in **once**, shows the question and its numbered choices, takes **one** answer, and writes the resulting `cn`/`cv` to the store (mode 0600, atomic, under a lock). It prints nothing secret. A wrong answer or password is **one** failed attempt: the helper stops with a fixed message and never loops. Do not retry blindly: check the answer, and log in once in the ÉcoleDirecte app or site first.
+3. Schedule the source. It presents the stored device at every login, and **saves the one the server returns after each login, before reading anything** (ÉcoleDirecte may rotate it), and again if it changed.
+
+If a scheduled run is asked the question anyway (the device expired, was revoked, or the store was lost), the source does **not** answer: it raises `AuthFailure("quiz_required")` and the account is **stopped** (`degraded: auth_stopped (quiz_required)`). Rerun the setup, then [reset the stop](#limits). An account that ÉcoleDirecte never asks a question has no device to store; the setup then says so and the source simply logs in.
+
+### Failures: degraded, never a retry loop
+
+| Case | Result |
+|---|---|
+| Wrong user name or password, a lockout message, a security question in a scheduled run, a refused answer | `AuthFailure(code)`: `degraded: auth_stopped (login_failed \| locked_out \| quiz_required \| quiz_failed)`; the account is **stopped** until a human resets it |
+| Network error, timeout (30 s per request, login and reads), HTTP 5xx or 429, a redirect, a body that is not the expected JSON or too large, a refused read, the store not writable after a login | `degraded: source_unavailable (network \| service \| api_changed \| credentials_unwritable)`; the guard backs off 1 h, 2 h ... 24 h |
+| Budget, window, backoff or stop | `degraded: budget_exhausted \| outside_window \| backoff_until <time> \| auth_stopped`, with no request |
+| `children` or `periods` that match nothing | `config_invalid`, after a good login that counts as a success |
+
+Messages are fixed codes: no credential, `cn`/`cv`, URL, name or response body is ever logged or returned. Any error code ÉcoleDirecte gives to a **login** counts as a refusal, not as an outage, because trying again is what locks accounts.
+
+### Network
+
+`plugin.yaml` declares the one host, **`api.ecoledirecte.com`** (`permissions.network`), which is the only host the client ever contacts (a request to another host, or a redirect, is impossible by construction). Before the budget is touched, the source asks `call.host_allowed`: `False` (the host is not approved in `horae.lock`) refuses with `network_not_approved`; `True`, or `None` (an older core that sent no list), proceeds with that declared host.
+
+### First check
+
+With your real account, in a directory approved for writing: run the setup, answer the question, then call `school-fr.ecoledirecte` twice, two hours apart (or with `min_interval: 1m`): the second run must not ask a question, the device file must exist with mode 0600, and the result must list your children's homework, grades and unread messages. If a field is empty or the status is `source_unavailable (api_changed)`, ÉcoleDirecte probably changed: open an issue without pasting any response.
+
+### Permissions
+
+| Kind | Entry | Why |
+|---|---|---|
+| intent | `task.create` | undone homework and things to sign (`normalize`) |
+| network | `api.ecoledirecte.com` | the ÉcoleDirecte API |
+| optional secret | `ECOLEDIRECTE_CREDENTIALS` | the user name and password |
+| path (per instance, `paths.write`) | the directory of `state_path` and `credentials_path` | the guard state and the trusted-device store |
 
 ## Normalization and de-identification
 
@@ -162,7 +228,7 @@ jq 'del(.accounts["anna"])' state.json > state.json.new && mv state.json.new sta
 
 ## For source authors
 
-The PRONOTE source (and the ÉcoleDirecte one to come) goes through the guard (`horae_school_fr.guard`, re-exported by `horae_school_fr`):
+The PRONOTE and ÉcoleDirecte sources go through the guard (`horae_school_fr.guard`, re-exported by `horae_school_fr`):
 
 ```python
 limits = Limits.from_params(
@@ -181,7 +247,7 @@ Leaving the block normally records a success; `AuthFailure` stops the account; a
 
 | Milestone | Epic |
 |---|---|
-| M7 Mail, school, home | **French school platforms** — Read-only PRONOTE and ÉcoleDirecte sources. Done so far: lockout-safe scheduling ([#5](../../issues/5)), normalization and de-identification ([#4](../../issues/4)), the PRONOTE source ([#2](../../issues/2)). |
+| M7 Mail, school, home | **French school platforms** — Read-only PRONOTE and ÉcoleDirecte sources. Done so far: lockout-safe scheduling ([#5](../../issues/5)), normalization and de-identification ([#4](../../issues/4)), the PRONOTE source ([#2](../../issues/2)), the ÉcoleDirecte source ([#3](../../issues/3)). |
 
 Stories, estimates and acceptance criteria are in this repository's [issues](../../issues) and on the [roadmap project](https://github.com/orgs/horae-dev/projects/1).
 

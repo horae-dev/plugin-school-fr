@@ -25,6 +25,6 @@ async def serve_and_call() -> tuple[set[str], str | None]:
 
 def test_serves_over_stdio() -> None:
     tools, error = anyio.run(serve_and_call)
-    assert tools == {TOOL, "school-fr.pronote"}
+    assert tools == {TOOL, "school-fr.pronote", "school-fr.ecoledirecte"}
     assert error is not None
     assert "path_not_approved" in error

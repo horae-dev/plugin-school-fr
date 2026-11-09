@@ -151,3 +151,51 @@ def test_the_secret_is_an_object_keyed_by_account() -> None:
     for bad in ("{nope", "[]", json.dumps({str(i): ENTRY for i in range(40)})):
         with pytest.raises(PluginError, match=SECRET):
             from_secret(bad, "anna")
+
+
+# --- the ÉcoleDirecte login and trusted device -------------------------------------------------
+
+
+def test_the_device_store_round_trips_privately(tmp_path: Path) -> None:
+    from horae_school_fr.credentials import Device, DeviceStore
+
+    store = DeviceStore(str(tmp_path / "d.json"))
+    assert store.load("famille") is None
+    store.save("famille", Device("cn-x", "cv-x"))
+    store.save("autre", Device("cn-y", "cv-y"))
+    assert store.load("famille") == Device("cn-x", "cv-x")
+    assert stat.S_IMODE((tmp_path / "d.json").stat().st_mode) == 0o600
+    assert "cn-x" not in repr(Device("cn-x", "cv-x"))
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".")] == []
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        None,
+        {},
+        {"cn": "a"},
+        {"cn": "a", "cv": ""},
+        {"cn": "a", "cv": 1},
+        {"cn": "a", "cv": "b", "x": "c"},
+    ],
+)
+def test_a_bad_device_is_refused_without_echoing_it(entry: object) -> None:
+    from horae_school_fr.credentials import parse_device
+
+    with pytest.raises(PluginError, match="credentials_invalid") as caught:
+        parse_device(entry)
+    assert "cn" not in str(caught.value).replace("cn and cv", "")
+
+
+def test_the_login_secret_is_an_object_keyed_by_account() -> None:
+    from horae_school_fr.credentials import ED_SECRET, login_from_secret, parse_login
+
+    raw = json.dumps({"famille": {"username": "u", "password": "p"}})
+    assert login_from_secret(raw, "famille") == parse_login({"username": "u", "password": "p"})
+    assert login_from_secret(raw, "autre") is None
+    assert login_from_secret(None, "famille") is None
+    for bad in ("nope", "[]", json.dumps({"famille": {"username": "u"}})):
+        with pytest.raises(PluginError, match="credentials_invalid") as caught:
+            login_from_secret(bad, "famille")
+        assert ED_SECRET in str(caught.value) or "needs" in str(caught.value)

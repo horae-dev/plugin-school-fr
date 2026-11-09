@@ -5,7 +5,7 @@ import sys
 
 from horae_sdk import dump_manifest
 
-from horae_school_fr import pronote
+from horae_school_fr import ecoledirecte, pronote
 from horae_school_fr.plugin import build, manifest
 
 HEADER = """\
@@ -21,8 +21,13 @@ def main(argv: list[str]) -> None:
         return
     if argv[:1] == ["pronote-setup"]:
         sys.exit(pronote.setup(argv[1:]))
+    if argv[:1] == ["ecoledirecte-setup"]:
+        sys.exit(ecoledirecte.setup(argv[1:]))
     if argv:
-        sys.exit("usage: python -m horae_school_fr [--manifest | pronote-setup ...]")
+        sys.exit(
+            "usage: python -m horae_school_fr "
+            "[--manifest | pronote-setup ... | ecoledirecte-setup ...]"
+        )
     # Never print while serving: stdout is the protocol channel.
     build().run()
 
