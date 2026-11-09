@@ -34,10 +34,13 @@ def test_plugin_yaml_passes_the_sdk_checks() -> None:
         read=paths.get("read", []),
         write=paths.get("write", []),
     )
+    provides = dict(document["provides"])
+    personal_fields = provides.pop("personal_fields", None)
     rebuilt = build_manifest(
         name=document["name"],
         version=document["version"],
-        provides=document["provides"],
+        provides=provides,
+        personal_fields=personal_fields,
         permissions=permissions,
         command=document["runtime"]["command"],
         horae=document["horae"],

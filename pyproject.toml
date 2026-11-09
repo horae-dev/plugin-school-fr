@@ -1,13 +1,13 @@
 [project]
 name = "horae-plugin-school-fr"
-version = "0.4.0"
+version = "0.4.1"
 description = "The school-fr Horae plugin: read-only PRONOTE and ÉcoleDirecte sources behind a lockout-safe login and poll budget."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
-    "horae-sdk>=0.6,<0.7",
+    "horae-sdk>=0.7,<0.8",
     "pronotepy==2.15.7",
     "requests>=2.32,<3",
 ]

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.1
+
+Personal fields declared to the core (story #10, schemas decision 68).
+
+- Requires `horae-sdk` 0.7 (`>=0.7,<0.8`).
+- `school-fr.pronote` and `school-fr.ecoledirecte` are registered with
+  `personal_fields=list(DEIDENTIFIED_FIELDS)`; `plugin.yaml` lists them in `provides.personal_fields`.
+  With a cloud alias the core now pseudonymizes the child and teacher names even for a skill that
+  declares no `input_view` class.
+- The core folds accents: the accent-gap test now asserts that `Zoe` and `ZOE` are caught when
+  `Zoé` is declared. `input_view()` stays as guidance and `NameScrubber` as extra protection.
+- Tests: a skill without classes sends no name to a cloud alias (run through the core with the
+  manifest declaration); the local-alias control is kept.
+
 ## 0.4.0
 
 The ÉcoleDirecte source (story #3).

@@ -26,8 +26,9 @@ this source to copy, and a test runs it through the core (`tests/test_deid.py`).
 Once a skill declares any class, the core also scans **every** other string of the viewed input
 for the known values (the declared names), so a name inside a homework description is covered.
 
-That scan compares letters case-folded but **not accent-folded**: `Zoe` is not `Zoé` to the core
-(a gap, reported in the README). As defence in depth `NameScrubber` rewrites, in the free text of
+Since horae-sdk 0.7 the plugin also declares `DEIDENTIFIED_FIELDS` as `personal_fields` of its
+sources (decision 68), which the core enforces without any skill class, and its scan is accent-
+folded. As defence in depth `NameScrubber` rewrites, in the free text of
 the **source data**, every whole-word occurrence of a declared name in any case or accent form
 (`zoe`, `ZOÉ`, a decomposed `é`) to the declared spelling. The core then pseudonymizes and
 restores it like any other occurrence. It does not catch nicknames, initials, typos or names of
