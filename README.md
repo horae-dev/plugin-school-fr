@@ -4,9 +4,9 @@
 
 Horae plugin: read-only PRONOTE and ÉcoleDirecte homework, notes and deadlines as tasks.
 
-Version 0.1.0 · requires `horae-sdk` 0.6 · Apache-2.0
+Version 0.2.0 · requires `horae-sdk` 0.6 · Apache-2.0
 
-> 🚧 **Early.** This release ships the lockout guard only. The PRONOTE and ÉcoleDirecte sources ([#2](../../issues/2), [#3](../../issues/3)) and normalization ([#4](../../issues/4)) come next and sit on top of it.
+> 🚧 **Early.** This release ships the lockout guard and the normalizer (with the de-identification of child names). The PRONOTE and ÉcoleDirecte sources ([#2](../../issues/2), [#3](../../issues/3)) come next and sit on top of them.
 
 ## The tool
 
@@ -19,6 +19,27 @@ Version 0.1.0 · requires `horae-sdk` 0.6 · Apache-2.0
 | `max_polls_per_day`, `min_interval`, `windows`, `max_logins_per_day` | the defaults below | the limits to judge `would_refuse` against |
 
 For each account it returns the polls and logins used today, the last poll, the earliest next poll, the backoff, the auth stop and `would_refuse` (the reason a poll would be refused right now, or `null`). A state file that cannot be trusted is reported as `state: invalid`.
+
+## Normalization and de-identification
+
+`horae_school_fr.normalize` is a library the sources call; it adds no tool and no permission. A source maps what the platform returns to `Child`, `Homework`, `Grade` and `Signature` and returns `normalize(account, children, homework=..., grades=..., signatures=...)`: the source data and the `task.create` intents.
+
+| Item | Becomes |
+|---|---|
+| Homework not done | data and a task (due date, in the instance time zone) |
+| Homework done | data only |
+| Grade / note | data only, never a task |
+| Thing to sign or acknowledge | data and a task |
+
+A task's fingerprint is `school-fr:<account>:<homework|signature>:<hash>`, the hash covering the stable fields only (child id, subject or title, date, text): the done flag, the attachments count and the teacher never change it. Titles are escaped with the SDK (`escape_title`) and capped at 160 characters. Free text in the data is capped; the data holds child ids per item, and names only in `children[].first_name` and the optional `teacher`.
+
+**De-identification.** In Horae, a *skill* declares de-identified fields in its `input_view` (`skill.yaml`, `{class: person}`); a plugin's manifest or a source's output carries no such annotation (schemas decision 47). So this plugin publishes the declaration as data for the skills built on it: `horae_school_fr.input_view()` (the whole view, to copy from) and `DEIDENTIFIED_FIELDS` (`children[].first_name`, `homework[].teacher`, `grades[].teacher`). With a cloud model alias the core then replaces those values, and every other string that contains one (a homework description that mentions the child), with `[PERSON_n]` before the request leaves, and restores them in the answer. `tests/test_deid.py` runs this output through the core's engine and `ModelBackends` and checks the exact bytes sent.
+
+Limits, in the core and here:
+
+- The core compares letters case-folded but **not accent-folded**: `Zoe` is not `Zoé` to it. `normalize` therefore spells every whole-word occurrence of a declared name in free text as declared (`zoe`, `ZOÉ`, a decomposed `é` become `Zoé`) so the core then catches it; `tests/test_deid.py` documents the gap.
+- Nicknames, initials, typos and names of fewer than 3 letters are not matched, by the core or here.
+- A skill that does not declare the classes gets no protection: copy every `person` line of `input_view()`. Local model aliases are sent the data unchanged, by design.
 
 ## Limits
 
@@ -77,7 +98,7 @@ Leaving the block normally records a success; `AuthFailure` stops the account; a
 
 | Milestone | Epic |
 |---|---|
-| M7 Mail, school, home | **French school platforms** — Read-only PRONOTE and ÉcoleDirecte sources. Done so far: lockout-safe scheduling ([#5](../../issues/5)). |
+| M7 Mail, school, home | **French school platforms** — Read-only PRONOTE and ÉcoleDirecte sources. Done so far: lockout-safe scheduling ([#5](../../issues/5)), normalization and de-identification ([#4](../../issues/4)). |
 
 Stories, estimates and acceptance criteria are in this repository's [issues](../../issues) and on the [roadmap project](https://github.com/orgs/horae-dev/projects/1).
 
