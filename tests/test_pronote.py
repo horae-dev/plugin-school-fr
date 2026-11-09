@@ -5,8 +5,8 @@ No network: pronotepy objects are replaced by `fake_pronote.Fake`. Names are syn
 
 import json
 import re
-import socket
 import stat
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -14,6 +14,7 @@ from typing import Any
 import anyio
 import pronotepy
 import pytest
+import requests
 from horae.llm.deid import pseudonymize
 from horae_sdk import Call, PluginError
 from horae_sdk.testing import Replayed
@@ -21,8 +22,10 @@ from horae_sdk.testing import call as call_tool
 
 from conftest import ManualClock, paris
 from fake_pronote import FIRST, URL, Fake
+from hanging_server import hanging_server
 from horae_school_fr import DEIDENTIFIED_FIELDS, AuthFailure, build, input_view, pronote
-from horae_school_fr.credentials import SECRET, CredentialStore
+from horae_school_fr._http import TimeoutSession
+from horae_school_fr.credentials import SECRET, Credentials, CredentialStore
 
 ENV_TZ = {"TZ": "Europe/Paris"}
 HOST = "0000000a.index-education.net"
@@ -495,20 +498,65 @@ def test_the_real_client_never_retries_on_its_own(monkeypatch: pytest.MonkeyPatc
     assert client._login() is True
 
 
-def test_login_bounds_every_request_and_restores_the_socket_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen: list[float | None] = []
+def test_login_is_cut_off_when_the_server_never_answers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pronote, "HTTP_TIMEOUT_S", 0.4)
+    with hanging_server() as port:
+        credentials = Credentials(
+            f"http://127.0.0.1:{port}/pronote/mobile.parent.html?login=true", "u", "t", "id"
+        )
+        started = time.monotonic()
+        with pytest.raises(OSError, match=r".") as caught:  # requests.Timeout is an OSError
+            pronote.login(credentials)
+    assert time.monotonic() - started < 3
+    assert isinstance(pronote.classify(caught.value, logging_in=True), pronote.SourceUnavailable)
 
-    def token_login(*args: Any, **kwargs: Any) -> str:
-        seen.append(socket.getdefaulttimeout())
-        return "client"
 
-    monkeypatch.setattr(pronote._Client, "token_login", token_login)
-    before = socket.getdefaulttimeout()
-    assert pronote.login(FIRST) == "client"
-    assert seen == [pronote.HTTP_TIMEOUT_S]
-    assert socket.getdefaulttimeout() == before
+def test_a_read_after_the_login_is_cut_off_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The session pronotepy keeps for the reads carries the timeout as well."""
+    monkeypatch.setattr(pronote, "HTTP_TIMEOUT_S", 0.4)
+    with hanging_server() as port:
+        communication = object.__new__(pronote.PRONOTE_API._Communication)
+        communication.root_site = f"http://127.0.0.1:{port}"
+        communication.session = pronote.PRONOTE_API.requests.Session()
+        communication.encryption = pronote.PRONOTE_API._Encryption()
+        communication.attributes = {"a": "1", "h": "1"}
+        communication.encrypt_requests = communication.compress_requests = False
+        communication.request_number = 1
+        communication.cookies = None
+        communication.authorized_onglets = []
+        started = time.monotonic()
+        with pytest.raises(OSError, match=r"."):
+            communication.post("PageCahierDeTexte", {"data": {}})
+        started_get = time.monotonic()
+        with pytest.raises(OSError, match=r"."):  # downloads use the same session
+            communication.session.get(f"http://127.0.0.1:{port}/x")
+    assert started_get - started < 3
+    assert time.monotonic() - started_get < 3
+
+
+def test_the_default_timeout_is_explicit_and_can_be_overridden() -> None:
+    session = pronote.PRONOTE_API.requests.Session()
+    assert isinstance(session, TimeoutSession)
+    assert session.default_timeout == pronote.HTTP_TIMEOUT_S
+    seen: list[Any] = []
+
+    class Spy(TimeoutSession):
+        pass
+
+    spy = Spy(7.0)
+    original = requests.Session.request
+
+    def record(self: Any, method: Any, url: Any, **kwargs: Any) -> None:
+        seen.append(kwargs.get("timeout"))
+        raise requests.ConnectionError
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(requests.Session, "request", record)
+        for kwargs in ({}, {"timeout": None}, {"timeout": 2.0}):
+            with pytest.raises(requests.ConnectionError):
+                spy.get("http://127.0.0.1:1/", **kwargs)
+    assert seen == [7.0, 7.0, 2.0]
+    assert original is requests.Session.request
 
 
 def test_pronotepy_is_imported_by_one_module_only() -> None:

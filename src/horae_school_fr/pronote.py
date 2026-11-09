@@ -34,15 +34,14 @@ three times when the login page does not parse.
 """
 
 import argparse
-import contextlib
 import getpass
 import hashlib
+import importlib
 import json
 import logging
 import math
 import os
 import re
-import socket
 import sys
 import unicodedata
 import uuid as uuidlib
@@ -52,9 +51,11 @@ from datetime import date, datetime, timedelta
 from typing import Any, Final, TextIO
 
 import pronotepy
+import requests
 from horae_sdk import Call, Output, PluginError
 from horae_sdk.protocol import url_host
 
+from horae_school_fr._http import TimeoutSession
 from horae_school_fr.credentials import (
     DEFAULT_NAME,
     SECRET,
@@ -86,7 +87,8 @@ logging.getLogger("pronotepy").propagate = False
 REF: Final = "school-fr.pronote"
 INDEX_EDUCATION: Final = ".index-education.net"
 HTTP_TIMEOUT_S: Final = 30.0
-"""pronotepy sets no timeout; the socket default bounds every request of a call."""
+"""pronotepy sets no timeout. Every request of its `requests.Session` (the login and the reads
+that follow) gets this one: see `_RequestsWithTimeout`."""
 MAX_DAYS_AHEAD: Final = 60
 INFO_DAYS: Final = 30
 """Unread informations are looked for since this many days."""
@@ -222,32 +224,38 @@ class _Client(pronotepy.ParentClient):
         raise _SessionLost
 
 
-@contextlib.contextmanager
-def _bounded() -> Iterator[None]:
-    previous = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(HTTP_TIMEOUT_S)
-    try:
-        yield
-    finally:
-        socket.setdefaulttimeout(previous)
+class _RequestsWithTimeout:
+    """What `pronotepy.pronoteAPI` sees as `requests`: the real module, except that `Session()`
+    is a `TimeoutSession`. pronotepy creates one session per connection and uses it for the login
+    and for every later read (and download), so none of its requests can wait forever."""
+
+    @staticmethod
+    def Session() -> TimeoutSession:
+        return TimeoutSession(HTTP_TIMEOUT_S)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(requests, name)
+
+
+PRONOTE_API: Final[Any] = importlib.import_module("pronotepy.pronoteAPI")
+"""The module that creates the `requests.Session` of every connection."""
+PRONOTE_API.requests = _RequestsWithTimeout()
 
 
 def login(credentials: Credentials) -> Any:
     """One PRONOTE token login (the real `connect`). pronotepy rotates the token in the client."""
-    with _bounded():
-        return _Client.token_login(
-            credentials.url,
-            credentials.username,
-            credentials.password,
-            credentials.uuid,
-            client_identifier=credentials.client_identifier,
-        )
+    return _Client.token_login(
+        credentials.url,
+        credentials.username,
+        credentials.password,
+        credentials.uuid,
+        client_identifier=credentials.client_identifier,
+    )
 
 
 def qr_login(qr_code: dict[str, str], pin: str, application_uuid: str) -> Any:
     """The one QR-code login of `pronote-setup`."""
-    with _bounded():
-        return _Client.qrcode_login(qr_code, pin, application_uuid)
+    return _Client.qrcode_login(qr_code, pin, application_uuid)
 
 
 Connect = Callable[[Credentials], Any]
