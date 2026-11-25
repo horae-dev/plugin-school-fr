@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.2
+
+Install with `horae plugin add` (horae-dev/horae#199).
+
+- Requires `horae-sdk` 0.9 (`>=0.9,<0.10`), from PyPI: no git source left in `uv.lock`.
+- No `exclude-newer` in `[tool.uv]`: `horae plugin add` runs `uv sync --locked --no-config`,
+  which ignores it, so the lock did not match. The 7-day cooldown is Renovate's
+  `minimumReleaseAge`.
+- The core (`horae`) left the dev group (it is not on PyPI and the core refuses a lock with a
+  git source). The tests that need it are skipped without it (`pytest.importorskip`); CI adds it
+  to the test run, pinned to a core commit (`uv run --with "horae @ git+..."`), so they still run.
+
 ## 0.4.1
 
 Personal fields declared to the core (story #10, schemas decision 68).

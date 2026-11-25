@@ -33,7 +33,7 @@ from horae_school_fr.normalize import DEIDENTIFIED_FIELDS
 
 NAME = "school-fr"
 """The plugin's name, also the namespace of its refs (`school-fr.status`)."""
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 HORAE = ">=0,<0.2"
 COMMAND = ["python3", "-m", "horae_school_fr"]
 """`runtime.command` of `plugin.yaml`. When installing, pin an absolute interpreter that has

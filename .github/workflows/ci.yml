@@ -80,7 +80,11 @@ jobs:
       - run: uv sync
       # Replays tests/recordings (record mode is refused in CI);
       # the 85% gate comes from [tool.coverage.report] in pyproject.toml.
-      - run: uv run pytest --cov --cov-report=term-missing
+      # The core (`horae`, not on PyPI, so not in uv.lock: horae-dev/horae#199) is added for the
+      # de-identification tests, pinned to a core commit; `python -m` so pytest sees it.
+      - run: >-
+          uv run --with "horae @ git+https://github.com/horae-dev/horae@6d053ef8057c1a9715cb1728981f976a4f00467b"
+          python -m pytest --cov --cov-report=term-missing
 
   gitleaks:
     name: Secret scan (gitleaks)

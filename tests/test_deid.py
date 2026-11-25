@@ -18,6 +18,10 @@ from typing import Any
 
 import pytest
 import yaml
+
+# The core is not in the dev group (pyproject.toml): without it this module is skipped; CI adds it.
+pytest.importorskip("horae")
+
 from horae.contracts import Pipeline, RunRecord, Usage
 from horae.contracts.instance import ModelAlias
 from horae.engine import execute, make_context
@@ -127,7 +131,7 @@ def run(
     plugins.add(
         {
             "name": "school-fr",
-            "version": "0.4.1",
+            "version": "0.4.2",
             "horae": ">=0",
             "provides": provides,
             "permissions": {},
