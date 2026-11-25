@@ -1,13 +1,13 @@
 [project]
 name = "horae-plugin-school-fr"
-version = "0.4.1"
+version = "0.4.2"
 description = "The school-fr Horae plugin: read-only PRONOTE and ÉcoleDirecte sources behind a lockout-safe login and poll budget."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
-    "horae-sdk>=0.7,<0.8",
+    "horae-sdk>=0.9,<0.10",
     "pronotepy==2.15.7",
     "requests>=2.32,<3",
 ]
@@ -20,8 +20,13 @@ build-backend = "hatchling.build"
 packages = ["src/horae_school_fr"]
 
 [dependency-groups]
+# The core (`horae`) is not in this group: it is not on PyPI, and `horae plugin add` refuses a
+# uv.lock with a git source (horae-dev/horae#199). The tests that need it (tests/test_deid.py and
+# one de-identification test each in test_pronote.py and test_ecoledirecte.py) are skipped
+# without it (`pytest.importorskip`); CI adds it to the test run, pinned to a core commit:
+# `uv run --with "horae @ git+https://github.com/horae-dev/horae@<sha>" pytest --cov`
+# (.github/workflows/ci.yml), so they run, and count for coverage, in the same step.
 dev = [
-    "horae",
     "mypy>=2.4",
     "pre-commit>=4.7",
     "pytest>=9.1",
@@ -30,19 +35,11 @@ dev = [
     "types-pyyaml>=6",
 ]
 
-# horae-sdk is not on PyPI yet: it comes from the core repository's main branch. uv.lock pins
-# the exact commit (CI checks the lock, so builds are reproducible); Renovate's weekly lock
-# file maintenance moves it to the latest main, or run `uv lock --upgrade-package horae-sdk`.
-# Once horae-sdk is published, delete this table: the requirement above then resolves from PyPI.
-[tool.uv.sources]
-horae-sdk = { git = "https://github.com/horae-dev/horae", branch = "main", subdirectory = "sdk" }
-# The core itself, for the tests only: the de-identification test runs this source's output
-# through the core's engine and `ModelBackends` with a recording provider (schemas decision 47).
-horae = { git = "https://github.com/horae-dev/horae", branch = "main" }
-
 [tool.uv]
 required-version = ">=0.13"
-exclude-newer = "7 days"
+# No exclude-newer here: `horae plugin add` runs `uv sync --locked --no-config`, which ignores
+# this table, so a lock resolved with it would not match. The 7-day cooldown on new releases
+# is Renovate's minimumReleaseAge (renovate.json).
 
 [tool.ruff]
 line-length = 100
@@ -61,6 +58,11 @@ files = ["src", "tests"]
 python_version = "3.12"
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+# The core is not installed by `uv sync` (see [dependency-groups]): its modules are untyped here.
+[[tool.mypy.overrides]]
+module = ["horae", "horae.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -4,7 +4,7 @@
 
 Horae plugin: read-only PRONOTE and ÉcoleDirecte homework, notes and deadlines as tasks.
 
-Version 0.4.1 · requires `horae-sdk` 0.7 · Apache-2.0
+Version 0.4.2 · requires `horae-sdk` 0.9 · Apache-2.0
 
 > 🚧 **Early.** This release ships the lockout guard, the normalizer (with the de-identification of child names), the **PRONOTE source** ([#2](../../issues/2)) and the **ÉcoleDirecte source** ([#3](../../issues/3)). Both sources are unofficial and have only been tested against recorded or synthetic data.
 
@@ -253,7 +253,7 @@ Stories, estimates and acceptance criteria are in this repository's [issues](../
 
 ## Development
 
-`uv sync`, then `uv run ruff check`, `uv run ruff format --check`, `uv run mypy` and `uv run pytest --cov` (the gate is 85%). After changing tools or permissions: `uv run python -m horae_school_fr --manifest > plugin.yaml`.
+`uv sync`, then `uv run ruff check`, `uv run ruff format --check`, `uv run mypy` and `uv run pytest --cov` (the gate is 85%). The de-identification tests need the core, which is not on PyPI and so not in the lock: they are skipped unless you add it, as CI does: `uv run --with "horae @ git+https://github.com/horae-dev/horae@main" python -m pytest --cov`. After changing tools or permissions: `uv run python -m horae_school_fr --manifest > plugin.yaml`.
 
 ## Contributing
 

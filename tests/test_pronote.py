@@ -15,7 +15,6 @@ import anyio
 import pronotepy
 import pytest
 import requests
-from horae.llm.deid import pseudonymize
 from horae_sdk import Call, PluginError
 from horae_sdk.testing import Replayed
 from horae_sdk.testing import call as call_tool
@@ -589,6 +588,8 @@ def test_the_names_the_source_outputs_are_declared_for_de_identification(h: Harn
     }
     assert set(declared) == {"[].data." + p for p in DEIDENTIFIED_FIELDS}
     assert "children[].first_name" in DEIDENTIFIED_FIELDS
+    # The core is not in the dev group (pyproject.toml): CI adds it to the test run.
+    pseudonymize = pytest.importorskip("horae.llm.deid").pseudonymize
     sent = pseudonymize(
         [{"source": "school-fr.pronote", "data": data}],
         {path: options for path, options in input_view().items() if options is not None},

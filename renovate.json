@@ -7,7 +7,7 @@
   "internalChecksFilter": "strict",
   "lockFileMaintenance": {
     "enabled": true,
-    "description": "Weekly uv.lock refresh. It also moves horae-sdk to the latest commit of the core's main: pyproject.toml takes it from the branch and uv.lock pins the commit. A git commit has no release timestamp, so the 7-day age cannot apply: review that bump like any dependency.",
+    "description": "Weekly uv.lock refresh. horae-sdk comes from PyPI, so the 7-day minimumReleaseAge applies to it like to any dependency. The core commit the CI test step adds (`uv run --with horae @ git+...`) is bumped by hand.",
     "schedule": ["before 6am on monday"]
   },
   "customManagers": [
