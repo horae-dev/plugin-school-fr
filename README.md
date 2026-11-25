@@ -4,7 +4,9 @@
 
 Horae plugin: read-only PRONOTE and ÉcoleDirecte homework, notes and deadlines as tasks.
 
-Version 0.4.2 · requires `horae-sdk` 0.9 · Apache-2.0
+Version 0.4.2 · requires `horae-sdk` 0.9 · Apache-2.0 · listed in the [marketplace](https://github.com/horae-dev/marketplace)
+
+**Docs:** <https://horae-dev.github.io/docs/plugins/school-fr/>
 
 > 🚧 **Early.** This release ships the lockout guard, the normalizer (with the de-identification of child names), the **PRONOTE source** ([#2](../../issues/2)) and the **ÉcoleDirecte source** ([#3](../../issues/3)). Both sources are unofficial and have only been tested against recorded or synthetic data.
 
@@ -16,7 +18,7 @@ Version 0.4.2 · requires `horae-sdk` 0.9 · Apache-2.0
 |---|---|---|
 | `state_path` | required | absolute path of the guard's JSON state file; its directory must be approved for writing (`paths.write`) in `horae.lock` |
 | `accounts` | all in the file | up to 16 account labels |
-| `max_polls_per_day`, `min_interval`, `windows`, `max_logins_per_day` | the defaults below | the limits to judge `would_refuse` against |
+| `max_polls_per_day`, `min_interval`, `windows`, `max_logins_per_day` | the defaults below, except `max_logins_per_day`: `2` here | the limits to judge `would_refuse` against. Pass the same values as your sources: with the defaults, `status` counts 2 logins a day where the sources allow 4 ([#13](../../issues/13)) |
 
 For each account it returns the polls and logins used today, the last poll, the earliest next poll, the backoff, the auth stop and `would_refuse` (the reason a poll would be refused right now, or `null`). A state file that cannot be trusted is reported as `state: invalid`.
 
@@ -201,7 +203,7 @@ Per account (a label, the same one the source uses), counted per **local day in 
 | `max_polls_per_day` | 4 | 1 to 12 | polls (attempts that may touch the network) per day |
 | `min_interval` | `2h` | `1m` to `24h` | least time between two polls (`90m`, `2h`) |
 | `windows` | none (any time) | up to 8 | allowed local-time windows, `["07:00-08:00", "17:00-20:00"]`; start inclusive, end exclusive; `22:00-06:00` crosses midnight |
-| `max_logins_per_day` | 2 | 1 to 6 | logins per day, counted apart from polls. A login happens **only when the cached session or token is gone** |
+| `max_logins_per_day` | `max_polls_per_day`, at most 6 (so 4 with the defaults); `2` for `school-fr.status` ([#13](../../issues/13)) | 1 to 6 | logins per day, counted apart from polls. A plugin process has no cached session, so **every poll of a source is a login**: keep it at least `max_polls_per_day`, or the lower number wins |
 
 **Backoff.** After a failure that is not an authentication failure (network, an API change, a parse error) the account waits 1 h, then 2 h, 4 h, 8 h, 16 h and at most 24 h after each further failure in a row. One success resets the streak.
 
